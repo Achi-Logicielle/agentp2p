@@ -1,99 +1,80 @@
-// src/p2p/server.ts
-import fs from 'fs';
-import https from 'https';
-import path from 'path';
-import WebSocket, { WebSocketServer } from 'ws';
-import mongoose from 'mongoose';
-import { saveP2PMessage } from '../sync/saveP2PMessage';
-import { P2PMessage } from './EnergyMessagingService';
+// scripts/start-server.js
+import { spawn } from 'child_process';
+import * as nodePath from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 
-// Connexion MongoDB
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://llaouinine:V6Yh16p6kAN4n7eR@cluster0.4htxlff.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
+// Récupérer l'adresse IP du serveur
+function getServerIP() {
+  const interfaces = os.networkInterfaces();
+  let serverIP = 'localhost';
 
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB connecté'))
-  .catch(err => console.error('❌ Erreur MongoDB:', err));
-
-// Liste des clients connectés pour broadcast
-const clients = new Set<WebSocket>();
-
-// Serveur HTTPS avec certif TLS
-const server = https.createServer({
-  cert: fs.readFileSync(path.join(__dirname, '../../cert/cert.pem')),
-  key: fs.readFileSync(path.join(__dirname, '../../cert/key.pem')),
-});
-
-const wss = new WebSocketServer({ server });
-
-wss.on('connection', (ws, req) => {
-  const ip = req.socket.remoteAddress;
-  console.log(`🤝 Nouveau peer connecté : ${ip}`);
-  
-  // Ajouter à la liste des clients
-  clients.add(ws);
-
-  // Envoyer un message de bienvenue
-  ws.send(JSON.stringify({
-    type: 'system',
-    message: 'Bienvenue sur le réseau P2P de microgrid',
-    timestamp: new Date().toISOString()
-  }));
-
-  ws.on('message', async (message) => {
-    try {
-      const msgObj = JSON.parse(message.toString()) as P2PMessage;
-      console.log(`📥 Message reçu de type ${msgObj.type} de ${msgObj.sender}`);
-      
-      // Sauvegarde en base
-      await saveP2PMessage(msgObj);
-      console.log('✅ Message sauvegardé');
-      
-      // Diffuser le message à tous les autres clients
-      broadcastMessage(ws, msgObj);
-      
-      // Envoi de confirmation au client émetteur
-      ws.send(JSON.stringify({ 
-        type: 'system',
-        status: 'received', 
-        message_type: msgObj.type,
-        timestamp: new Date().toISOString() 
-      }));
-    } catch (err) {
-      console.error('❌ Erreur traitement message:', err);
-      ws.send(JSON.stringify({ 
-        type: 'system',
-        status: 'error', 
-        message: 'Format de message invalide',
-        timestamp: new Date().toISOString() 
-      }));
+  // Chercher une adresse IPv4 non-interne
+  Object.keys(interfaces).forEach((ifname) => {
+    const ifaceList = interfaces[ifname];
+    if (ifaceList) {
+      ifaceList.forEach((iface) => {
+        if ('IPv4' === iface.family && !iface.internal) {
+          serverIP = iface.address;
+        }
+      });
     }
   });
 
-  ws.on('close', () => {
-    console.log(`❌ Peer déconnecté: ${ip}`);
-    clients.delete(ws);
-  });
-
-  ws.on('error', (error) => {
-    console.error(`❌ Erreur WebSocket: ${error}`);
-    clients.delete(ws);
-  });
-});
-
-/**
- * Diffuse un message à tous les clients connectés sauf l'émetteur
- */
-function broadcastMessage(sender: WebSocket, message: P2PMessage): void {
-  const messageStr = JSON.stringify(message);
-  clients.forEach(client => {
-    if (client !== sender && client.readyState === WebSocket.OPEN) {
-      client.send(messageStr);
-    }
-  });
+  return serverIP;
 }
 
-// Démarrage du serveur
-const PORT = process.env.P2P_PORT || 8443;
-server.listen(PORT, () => {
-  console.log(`🌐 Serveur P2P sécurisé lancé sur https://localhost:${PORT}`);
-});
+const SERVER_IP = process.env.SERVER_IP || getServerIP();
+const SERVER_PORT = process.env.P2P_PORT || '8443';
+
+// Vérifier si les certificats existent
+const certPath = nodePath.join(__dirname, '../cert/cert.pem');
+const keyPath = nodePath.join(__dirname, '../cert/key.pem');
+
+if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+  console.log('⚠️ Certificats manquants, génération en cours...');
+  
+  // Générer les certificats
+  const generateCerts = spawn('node', [
+    nodePath.join(__dirname, 'generate-certificates.js'),
+    SERVER_IP
+  ], { stdio: 'inherit' });
+  
+  generateCerts.on('close', (code: number) => {
+    if (code !== 0) {
+      console.error('❌ Échec de la génération des certificats');
+      process.exit(1);
+    }
+    
+    // Démarrer le serveur après la génération des certificats
+    startServer();
+  });
+} else {
+  // Les certificats existent déjà, démarrer le serveur
+  startServer();
+}
+
+function startServer() {
+  console.log(`🌐 Démarrage du serveur P2P sur ${SERVER_IP}:${SERVER_PORT}...`);
+  
+  const serverProcess = spawn('ts-node', [
+    nodePath.join(__dirname, '../src/p2p/server.ts')
+  ], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      P2P_PORT: SERVER_PORT,
+      SERVER_IP: SERVER_IP
+    }
+  });
+  
+  serverProcess.on('close', (code: any) => {
+    console.log(`🛑 Serveur P2P arrêté avec code ${code}`);
+  });
+  
+  // Afficher les informations pour la connexion des clients
+  console.log('\n📋 INFORMATIONS DE CONNEXION CLIENT:');
+  console.log(`Pour connecter un client à ce serveur, utilisez:`);
+  console.log(`npm run start-client -- --server=wss://${SERVER_IP}:${SERVER_PORT}`);
+  console.log('\n⚠️ NOTE: Si vous utilisez des machines différentes, copiez les certificats du dossier "cert" sur la machine cliente\n');
+}

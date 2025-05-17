@@ -1,75 +1,64 @@
-// src/p2p/client.ts
-import { EnergyMessagingService } from './EnergyMessagingService';
+// scripts/start-client.js
+const { spawn } = require('child_process');
+// const path = require('path');
+// const fs = require('fs');
+const os = require('os');
 
-// Configuration du client microgrid
-const MICROGRID_ID = process.env.MICROGRID_ID || 'microgrid-1';
-const P2P_SERVER = process.env.P2P_SERVER || 'wss://localhost:8443';
-
-// Intervalle pour le partage d'état (en ms)
-const STATE_SHARING_INTERVAL = 60000; // 1 minute
-
-async function main() {
-  try {
-    console.log(`🔌 Initialisation du client P2P pour ${MICROGRID_ID}...`);
+// Parser les arguments de ligne de commande
+function parseArgs(): { [key: string]: string | boolean } {
+  const args: { [key: string]: string | boolean } = {};
+  
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
     
-    // Créer le service de messagerie
-    const messagingService = new EnergyMessagingService(MICROGRID_ID, P2P_SERVER);
-    
-    // Se connecter au réseau P2P
-    await messagingService.connect();
-    
-    // Démarrer le partage périodique d'état
-    messagingService.startPeriodicStateSharing(STATE_SHARING_INTERVAL);
-    
-    // Simuler quelques propositions d'échange basées sur l'état du système
-    simulateExchangeProposals(messagingService);
-    
-    // Gérer la fermeture propre de l'application
-    setupGracefulShutdown(messagingService);
-    
-  } catch (error) {
-    console.error('❌ Erreur d\'initialisation du client P2P:', error);
-    process.exit(1);
-  }
-}
-
-/**
- * Simule l'émission périodique de propositions d'échange
- * Dans un système réel, cela serait déclenché par l'algorithme de gestion d'énergie
- */
-function simulateExchangeProposals(messagingService: EnergyMessagingService) {
-  // Simuler une proposition d'échange toutes les 2-5 minutes
-  setInterval(() => {
-    // Générer aléatoirement un surplus ou un besoin d'énergie
-    const energyBalance = (Math.random() * 20 - 10).toFixed(2);
-    const energyAmount = parseFloat(energyBalance);
-    
-    // Deadline aléatoire entre 15 et 60 minutes
-    const deadlineMinutes = Math.floor(Math.random() * 46) + 15;
-    
-    console.log(`🔄 Simulation: ${energyAmount > 0 ? 'Surplus' : 'Besoin'} d'énergie détecté: ${Math.abs(energyAmount)} kWh`);
-    
-    // Proposer un échange uniquement si la quantité est significative
-    if (Math.abs(energyAmount) > 2) {
-      messagingService.proposeEnergyExchange(energyAmount, deadlineMinutes);
+    if (arg.startsWith('--')) {
+      const [key, value] = arg.substring(2).split('=');
+      args[key] = value || true;
     }
-  }, Math.floor(Math.random() * 180000) + 120000); // Entre 2 et 5 minutes
+  }
+  
+  return args;
 }
 
-/**
- * Configure la fermeture propre de l'application
- */
-function setupGracefulShutdown(messagingService: EnergyMessagingService) {
-  const shutdown = () => {
-    console.log('🛑 Arrêt du client P2P...');
-    messagingService.disconnect();
-    process.exit(0);
-  };
+const args = parseArgs();
+const MICROGRID_ID = args.id || process.env.MICROGRID_ID || `microgrid-${Math.floor(Math.random() * 1000)}`;
 
-  // Intercepter les signaux d'arrêt
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+// Déterminer l'URL du serveur
+let SERVER_URL = 'wss://localhost:8443';
+
+if (typeof args.server === 'string') {
+  // Si l'URL est fournie directement
+  SERVER_URL = args.server.startsWith('ws') ? args.server : `wss://${args.server}`;
+} else if (process.env.SERVER_IP) {
+  // Si l'adresse IP du serveur est fournie via une variable d'environnement
+  const serverIP = process.env.SERVER_IP;
+  const serverPort = process.env.P2P_PORT || '8443';
+  SERVER_URL = `wss://${serverIP}:${serverPort}`;
 }
+
+// Vérifier si les certificats existent
+const certPath = path.join(__dirname, '../cert/cert.pem');
+
+if (!fs.existsSync(certPath)) {
+  console.warn('⚠️ Certificat non trouvé:', certPath);
+  console.warn('La connexion au serveur pourrait échouer sans certificat valide.');
+  console.warn('Générez des certificats sur le serveur et copiez-les dans le dossier "cert" du client.');
+}
+
+console.log(`🌐 Démarrage du client P2P ${MICROGRID_ID} pour le serveur ${SERVER_URL}...`);
 
 // Démarrer le client
-main();
+const clientProcess = spawn('ts-node', [
+  path.join(__dirname, '../src/index.ts')
+], {
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    MICROGRID_ID: MICROGRID_ID,
+    P2P_SERVER: SERVER_URL
+  }
+});
+
+clientProcess.on('close', (code: any) => {
+  console.log(`🛑 Client P2P arrêté avec code ${code}`);
+});
