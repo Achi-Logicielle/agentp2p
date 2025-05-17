@@ -48,8 +48,9 @@ if (!fs.existsSync(certPath)) {
 console.log(`🌐 Démarrage du client P2P ${MICROGRID_ID} pour le serveur ${SERVER_URL}...`);
 
 // Démarrer le client
-const clientProcess = spawn('ts-node', [
-  path.join(__dirname, '../src/index.ts')
+const clientProcess = spawn('node', [
+  require.resolve('ts-node/register'),
+  path.resolve(__dirname, '../src/index.ts')
 ], {
   stdio: 'inherit',
   env: {
