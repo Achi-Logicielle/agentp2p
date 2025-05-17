@@ -8,9 +8,9 @@
     "start": "ts-node src/index.ts",
     "dev": "ts-node-dev --respawn src/index.ts",
     "test": "jest",
-    "start-server": "node scripts/start-server.js",
-    "start-client": "node scripts/start-client.js",
-    "generate-certs": "node scripts/generate-certificates.js"
+    "start-server": "node src/p2p/start-server.js",
+    "start-client": "node src/p2p/start-client.js",
+    "generate-certs": "node src/cert/generate-certificates.js"
   },
   "dependencies": {
     "mongoose": "^7.5.0",

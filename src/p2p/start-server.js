@@ -1,8 +1,8 @@
-// scripts/start-server.js
-import { spawn } from 'child_process';
-import * as nodePath from 'path';
-import * as fs from 'fs';
-import * as os from 'os';
+/ scripts/start-server.js
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 // Récupérer l'adresse IP du serveur
 function getServerIP() {
@@ -11,14 +11,11 @@ function getServerIP() {
 
   // Chercher une adresse IPv4 non-interne
   Object.keys(interfaces).forEach((ifname) => {
-    const ifaceList = interfaces[ifname];
-    if (ifaceList) {
-      ifaceList.forEach((iface) => {
-        if ('IPv4' === iface.family && !iface.internal) {
-          serverIP = iface.address;
-        }
-      });
-    }
+    interfaces[ifname].forEach((iface) => {
+      if ('IPv4' === iface.family && !iface.internal) {
+        serverIP = iface.address;
+      }
+    });
   });
 
   return serverIP;
@@ -28,19 +25,19 @@ const SERVER_IP = process.env.SERVER_IP || getServerIP();
 const SERVER_PORT = process.env.P2P_PORT || '8443';
 
 // Vérifier si les certificats existent
-const certPath = nodePath.join(__dirname, '../cert/cert.pem');
-const keyPath = nodePath.join(__dirname, '../cert/key.pem');
+const certPath = path.join(__dirname, '../cert/cert.pem');
+const keyPath = path.join(__dirname, '../cert/key.pem');
 
 if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
   console.log('⚠️ Certificats manquants, génération en cours...');
   
   // Générer les certificats
   const generateCerts = spawn('node', [
-    nodePath.join(__dirname, 'generate-certificates.js'),
+    path.join(__dirname, 'generate-certificates.js'),
     SERVER_IP
   ], { stdio: 'inherit' });
   
-  generateCerts.on('close', (code: number) => {
+  generateCerts.on('close', (code) => {
     if (code !== 0) {
       console.error('❌ Échec de la génération des certificats');
       process.exit(1);
@@ -58,7 +55,7 @@ function startServer() {
   console.log(`🌐 Démarrage du serveur P2P sur ${SERVER_IP}:${SERVER_PORT}...`);
   
   const serverProcess = spawn('ts-node', [
-    nodePath.join(__dirname, '../src/p2p/server.ts')
+    path.join(__dirname, '../src/p2p/server.ts')
   ], {
     stdio: 'inherit',
     env: {
@@ -68,7 +65,7 @@ function startServer() {
     }
   });
   
-  serverProcess.on('close', (code: any) => {
+  serverProcess.on('close', (code) => {
     console.log(`🛑 Serveur P2P arrêté avec code ${code}`);
   });
   

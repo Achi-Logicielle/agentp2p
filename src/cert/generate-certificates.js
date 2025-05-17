@@ -21,9 +21,10 @@ console.log('🔑 Génération du certificat auto-signé...');
 const serverIP = process.argv[2] || 'localhost';
 console.log(`🌐 Création du certificat pour: ${serverIP}`);
 
-const opensslCommand = `openssl req -x509 -newkey rsa:4096 -keyout ${keyFile} -out ${certFile} -days 365 -nodes -subj "/CN=${serverIP}"`;
+const opensslCommand = `openssl req -x509 -newkey rsa:4096 -keyout "${keyFile}" -out "${certFile}" -days 365 -nodes -subj "/CN=${serverIP}"`
 
-exec(opensslCommand, (error: any, stdout: any, stderr: any) => {
+
+exec(opensslCommand, (error, stdout, stderr) => {
   if (error) {
     console.error('❌ Erreur lors de la génération du certificat:', error);
     console.error('💡 Assurez-vous qu\'OpenSSL est installé sur votre système');

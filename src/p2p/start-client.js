@@ -1,12 +1,12 @@
 // scripts/start-client.js
 const { spawn } = require('child_process');
-// const path = require('path');
-// const fs = require('fs');
+const path = require('path');
+const fs = require('fs');
 const os = require('os');
 
 // Parser les arguments de ligne de commande
-function parseArgs(): { [key: string]: string | boolean } {
-  const args: { [key: string]: string | boolean } = {};
+function parseArgs() {
+  const args = {};
   
   for (let i = 2; i < process.argv.length; i++) {
     const arg = process.argv[i];
@@ -26,7 +26,7 @@ const MICROGRID_ID = args.id || process.env.MICROGRID_ID || `microgrid-${Math.fl
 // Déterminer l'URL du serveur
 let SERVER_URL = 'wss://localhost:8443';
 
-if (typeof args.server === 'string') {
+if (args.server) {
   // Si l'URL est fournie directement
   SERVER_URL = args.server.startsWith('ws') ? args.server : `wss://${args.server}`;
 } else if (process.env.SERVER_IP) {
@@ -59,6 +59,6 @@ const clientProcess = spawn('ts-node', [
   }
 });
 
-clientProcess.on('close', (code: any) => {
+clientProcess.on('close', (code) => {
   console.log(`🛑 Client P2P arrêté avec code ${code}`);
 });
