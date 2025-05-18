@@ -1,10 +1,9 @@
-// src/p2p/EnergyMessagingService.ts
 import WebSocket from 'ws';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-// Types de messages pour le protocole P2P
+
 export interface EnergyStateMessage {
   type: 'energy_state';
   sender: string;
@@ -30,86 +29,142 @@ export class EnergyMessagingService {
   private microgridId: string;
   private serverUrl: string;
   private stateInterval: NodeJS.Timeout | null = null;
+  private messageHandler: ((message: P2PMessage) => void) | null = null;
+  private reconnecting: boolean = false;
   
   constructor(microgridId: string, serverUrl: string = 'wss://localhost:8443') {
     this.microgridId = microgridId;
     this.serverUrl = serverUrl;
   }
 
-  /**
-   * Se connecte au réseau P2P
-   */
+  
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
+        console.log(`Tentative de connexion à ${this.serverUrl}`);
+        
+        
+        if (this.ws) {
+          this.ws.terminate();
+          this.ws = null;
+        }
+        
         this.ws = new WebSocket(this.serverUrl, {
           cert: fs.readFileSync(path.join(__dirname, '../../cert/cert.pem')),
-          rejectUnauthorized: false // Pour autoriser auto-signé en dev
+          rejectUnauthorized: false, 
+          handshakeTimeout: 10000 // 10 seconds timeout for handshake
         });
 
+        // Connection timeout
+        const connectTimeout = setTimeout(() => {
+          if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            console.error('⏱️ Connection timeout');
+            this.ws.terminate();
+            reject(new Error('Connection timeout'));
+          }
+        }, 15000);
+
         this.ws.on('open', () => {
+          clearTimeout(connectTimeout);
           console.log(`🚀 Microgrid ${this.microgridId} connecté au réseau P2P`);
           this.setupListeners();
+          
+          
+          this.sendMessage({
+            type: 'energy_state',
+            sender: this.microgridId,
+            timestamp: new Date().toISOString(),
+            state_of_charge: 50,
+            forecast_production: '10.0',
+            forecast_consumption: '8.0'
+          });
+          
           resolve();
         });
 
         this.ws.on('error', (err) => {
-          console.error('❌ Erreur WebSocket:', err);
+          clearTimeout(connectTimeout);
+          console.error('Erreur WebSocket:', err);
           reject(err);
         });
       } catch (error) {
+        console.error('Exception lors de la tentative de connexion:', error);
         reject(error);
       }
     });
   }
 
-  /**
-   * Configure les écouteurs d'événements WebSocket
-   */
+
   private setupListeners(): void {
     if (!this.ws) return;
 
     this.ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString()) as P2PMessage;
-        console.log(`📥 Message reçu de type ${message.type}:`, message);
+        console.log(`📥 Message reçu de type ${message.type}`);
         
-        // Ici vous pouvez ajouter une logique de traitement spécifique
-        // selon le type de message reçu
+        
+        if (this.messageHandler) {
+          this.messageHandler(message);
+        }
+        
+        
         if (message.type === 'energy_exchange') {
           this.handleExchangeProposal(message);
         }
       } catch (error) {
-        console.error('❌ Erreur de traitement du message:', error);
+        console.error('Erreur de traitement du message:', error);
       }
     });
 
-    this.ws.on('close', () => {
-      console.log(`❌ Microgrid ${this.microgridId} déconnecté du réseau P2P`);
+    this.ws.on('close', (code, reason) => {
+      console.log(`Microgrid ${this.microgridId} déconnecté du réseau P2P (${code}: ${reason})`);
       this.stopPeriodicStateSharing();
+      if (!this.reconnecting && code !== 1000) {
+        this.reconnecting = true;
+        console.log('Tentative de reconnexion automatique dans 5 secondes...');
+        setTimeout(() => {
+          this.reconnecting = false;
+          this.connect().catch(err => {
+            console.error('Échec de la reconnexion:', err);
+          });
+        }, 5000);
+      }
+    });
+    
+    
+    this.ws.on('ping', () => {
+      console.log('Ping reçu du serveur');
+    });
+    
+    this.ws.on('pong', () => {
+      console.log('📌 Pong reçu du serveur');
     });
   }
 
-  /**
-   * Démarre le partage périodique de l'état énergétique
-   * @param intervalMs Intervalle en millisecondes
-   */
+  isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+
+  onMessage(handler: (message: P2PMessage) => void): void {
+    this.messageHandler = handler;
+  }
+
+ 
   startPeriodicStateSharing(intervalMs: number = 60000): void {
-    // Arrêter tout intervalle existant
+    
     this.stopPeriodicStateSharing();
     
-    // Publier immédiatement le premier état
+    
     this.publishEnergyState();
     
-    // Configurer l'intervalle pour les publications suivantes
+    
     this.stateInterval = setInterval(() => {
       this.publishEnergyState();
     }, intervalMs);
   }
 
-  /**
-   * Arrête le partage périodique de l'état énergétique
-   */
   stopPeriodicStateSharing(): void {
     if (this.stateInterval) {
       clearInterval(this.stateInterval);
@@ -117,13 +172,10 @@ export class EnergyMessagingService {
     }
   }
 
-  /**
-   * Publie l'état énergétique actuel du microgrid
-   * Dans un cas réel, ces valeurs proviendraient de capteurs/système
-   */
+  
   publishEnergyState(): void {
-    if (!this.ws) {
-      console.error("❌ Pas de connexion WebSocket active");
+    if (!this.isConnected()) {
+      console.error("Pas de connexion WebSocket active pour publier l'état");
       return;
     }
 
@@ -140,14 +192,9 @@ export class EnergyMessagingService {
     this.sendMessage(stateMessage);
   }
 
-  /**
-   * Envoie une proposition d'échange d'énergie
-   * @param energyAmount Quantité d'énergie (+ pour offre, - pour demande)
-   * @param deadlineMinutes Délai en minutes pour l'échange
-   */
   proposeEnergyExchange(energyAmount: number, deadlineMinutes: number = 30): void {
-    if (!this.ws) {
-      console.error("❌ Pas de connexion WebSocket active");
+    if (!this.isConnected()) {
+      console.error("Pas de connexion WebSocket active pour proposer un échange");
       return;
     }
 
@@ -166,58 +213,44 @@ export class EnergyMessagingService {
     this.sendMessage(proposal);
   }
 
-  /**
-   * Traite une proposition d'échange reçue
-   * @param proposal La proposition reçue
-   */
+
   private handleExchangeProposal(proposal: EnergyExchangeProposal): void {
-    // Logique de décision pour accepter/refuser une proposition
-    // Ici vous implémenterez votre algorithme de matching
+    
     console.log(`⚡ Proposition d'échange reçue de ${proposal.sender}: ${proposal.energy_amount} kWh`);
     
-    // Exemple simple: accepter toutes les demandes si nous avons de l'énergie disponible
-    // Dans un cas réel, vous auriez une logique plus complexe
     const weHaveExcessEnergy = Math.random() > 0.5; // Simulation
     
     if (proposal.energy_amount < 0 && weHaveExcessEnergy) {
-      console.log(`✅ Acceptation de la demande d'échange ${proposal.session_id}`);
-      // Implémentez ici la logique d'acceptation
+      console.log(`Acceptation de la demande d'échange ${proposal.session_id}`);
+      
     }
   }
 
-  /**
-   * Envoie un message sur le réseau P2P
-   * @param message Le message à envoyer
-   */
   private sendMessage(message: P2PMessage): void {
-    if (!this.ws) {
-      console.error("❌ Pas de connexion WebSocket active");
+    if (!this.isConnected()) {
+      console.error("Pas de connexion WebSocket active pour envoyer un message");
       return;
     }
 
     try {
-      this.ws.send(JSON.stringify(message));
-      console.log(`📤 Message envoyé (${message.type}):`, message);
+      this.ws!.send(JSON.stringify(message));
+      console.log(`Message envoyé (${message.type})`);
     } catch (error) {
-      console.error('❌ Erreur d\'envoi de message:', error);
+      console.error('Erreur d\'envoi de message:', error);
     }
   }
 
-  /**
-   * Génère un identifiant unique pour une session d'échange
-   */
   private generateSessionId(): string {
     return crypto.randomUUID();
   }
 
-  /**
-   * Ferme la connexion WebSocket
-   */
+
   disconnect(): void {
     if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+      console.log('Déconnexion du réseau P2P');
       this.stopPeriodicStateSharing();
+      this.ws.close(1000, 'disconnecting normally');
+      this.ws = null;
     }
   }
 }

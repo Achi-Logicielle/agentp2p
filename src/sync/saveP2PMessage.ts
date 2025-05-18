@@ -4,7 +4,7 @@ import { P2PMessage } from '../p2p/EnergyMessagingService';
 
 // Schéma pour les messages P2P
 const p2pMessageSchema = new mongoose.Schema({
-  type: { type: String, required: true, enum: ['energy_state', 'energy_exchange', 'system'] },
+  type: { type: String, required: true, enum: ['energy_state', 'energy_exchange'] },
   sender: { type: String, required: true },
   timestamp: { type: Date, required: true },
   
@@ -46,7 +46,7 @@ export async function saveP2PMessage(message: P2PMessage): Promise<any> {
     const newMessage = new P2PMessageModel(processedMessage);
     return await newMessage.save();
   } catch (error) {
-    console.error('❌ Erreur de sauvegarde du message P2P:', error);
+    console.error('Erreur de sauvegarde du message P2P:', error);
     throw error;
   }
 }
@@ -61,7 +61,7 @@ export async function getLatestEnergyStates(limit = 1): Promise<any[]> {
     // Grouper par émetteur et récupérer les derniers messages
     const pipeline = [
       { $match: { type: 'energy_state' } },
-      { $sort: { timestamp: <1 | -1>-1 } },
+      { $sort: { timestamp: -1 as 1 | -1 } },
       { $group: {
           _id: '$sender',
           latestState: { $first: '$$ROOT' }
@@ -72,7 +72,7 @@ export async function getLatestEnergyStates(limit = 1): Promise<any[]> {
     
     return await P2PMessageModel.aggregate(pipeline);
   } catch (error) {
-    console.error('❌ Erreur de récupération des états énergétiques:', error);
+    console.error('Erreur de récupération des états énergétiques:', error);
     throw error;
   }
 }
@@ -91,7 +91,7 @@ export async function getActiveExchangeProposals(): Promise<any[]> {
       processed: false
     }).sort({ timestamp: -1 });
   } catch (error) {
-    console.error('❌ Erreur de récupération des propositions d\'échange:', error);
+    console.error(' Erreur de récupération des propositions d\'échange:', error);
     throw error;
   }
 }
